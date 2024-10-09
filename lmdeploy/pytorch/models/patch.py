@@ -107,7 +107,7 @@ def _get_module_map():
     """get module map."""
     module_map = MODULE_MAP.copy()
     device_type = get_device_manager().current_context().device_type
-    if device_type != 'cuda':
+    if device_type not in ['cuda', 'cpu']:
         device_map = DEVICE_SPECIAL_MODULE_MAP.get(device_type, dict())
         module_map.update(device_map)
     # add custom module map

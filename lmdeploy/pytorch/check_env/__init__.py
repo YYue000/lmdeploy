@@ -40,7 +40,7 @@ def try_import_deeplink(device_type: str):
             _handle_exception(e, 'PyTorch', logger)
 
 
-def check_env_torch():
+def check_env_torch(device_type="cuda"):
     """check PyTorch environment."""
     logger = get_logger('lmdeploy')
 
@@ -48,8 +48,8 @@ def check_env_torch():
         logger.debug('Checking <PyTorch> environment.')
         import torch
 
-        a = torch.tensor([1, 2], device='cuda')
-        b = a.new_tensor([3, 4], device='cuda')
+        a = torch.tensor([1, 2], device=device_type)
+        b = a.new_tensor([3, 4], device=device_type)
         c = a + b
         torch.testing.assert_close(c, a.new_tensor([4, 6]))
     except Exception as e:
@@ -97,7 +97,7 @@ def check_env(device_type: str):
     logger = get_logger('lmdeploy')
     logger.info('Checking environment for PyTorch Engine.')
     check_env_deeplink(device_type)
-    check_env_torch()
+    check_env_torch(device_type)
     if device_type == 'cuda':
         check_env_triton()
 

@@ -161,7 +161,9 @@ class Engine:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
         self.backend_config = backend_config
-        self.stream = torch.cuda.Stream()
+        
+        if self.device_context.device_type not in ['cpu']:
+            self.stream = torch.cuda.Stream()
 
         self.req_manager = self._bind_request_manager()
 
@@ -524,8 +526,10 @@ class Engine:
 
             last_idx = seq_length.cumsum(-1) - 1
             return logits[last_idx, :]
-
-        split_logits = __get_last_logits().cuda()
+        
+        split_logits = __get_last_logits()
+        if self.device_context.device_type not in ['cpu']:
+            split_logits = split_logits.cuda()
         logits_processor = FusedLogitsProcessor(sampling_inputs, ignore_eos,
                                                 self.tokenizer.model.model)
         logits = logits_processor(all_ids, guided_input_ids, split_logits)
@@ -593,7 +597,8 @@ class Engine:
                 """get tmp_output."""
                 if not return_logits:
                     return self._output[:, -1:]
-                torch.cuda.synchronize()
+                if self.device_context.device_type not in ['cpu']:
+                    torch.cuda.synchronize()
                 return self._output
 
         async def __forward(inputs):
@@ -725,13 +730,14 @@ class Engine:
                      f'batch_size={inputs.seq_length.size(0)} '
                      f'num_tokens={inputs.input_ids.size(-1)}')
         is_decoding = inputs.is_decoding
-        if all_ids is not None:
-            all_ids = all_ids.cuda()
-        if guided_input_ids is not None:
-            guided_input_ids = guided_input_ids.cuda()
-        sampling_inputs = sampling_inputs.to_device('cuda')
-        num_appendable_ids = num_appendable_ids.cuda()
-        num_ignore_eos = num_ignore_eos.cuda()
+        if self.device_context.device_type not in ['cpu']:
+            if all_ids is not None:
+                all_ids = all_ids.cuda()
+            if guided_input_ids is not None:
+                guided_input_ids = guided_input_ids.cuda()
+            sampling_inputs = sampling_inputs.to_device('cuda')
+            num_appendable_ids = num_appendable_ids.cuda()
+            num_ignore_eos = num_ignore_eos.cuda()
 
         for idx in range(loop_count):
             # inference
@@ -941,9 +947,13 @@ class Engine:
 
     async def async_loop(self):
         device_manager = get_device_manager()
-        with device_manager.context(self.device_context), torch.cuda.stream(
-                self.stream):
-            await self._async_loop()
+        if self.device_context.device_type in ['cpu']:
+            with device_manager.context(self.device_context):
+                await self._async_loop()
+        else:
+            with device_manager.context(self.device_context), torch.cuda.stream(
+                    self.stream):
+                await self._async_loop()
 
     def create_instance(self, cuda_stream_id=0):
         """Create a pytorch engine instance.

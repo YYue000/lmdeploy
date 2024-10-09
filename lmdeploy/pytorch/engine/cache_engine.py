@@ -13,8 +13,7 @@ KVCache = Tuple[torch.Tensor, torch.Tensor]
 
 logger = get_logger('lmdeploy')
 
-
-class CacheEngine:
+class BaseCacheEngine:
     """Host and Device memory maintainer.
 
     Args:
@@ -48,15 +47,6 @@ class CacheEngine:
         self.local_gpu_cache = self.allocate_gpu_cache()
         self.local_cpu_cache = self.allocate_cpu_cache()
 
-        # Initialize the stream for caching operations.
-        self.cache_stream = torch.cuda.Stream()
-        assert self.cache_stream != torch.cuda.current_stream()
-        # Initialize the events for stream synchronization.
-        self.events = [torch.cuda.Event() for _ in range(self.num_layers)]
-
-        logger.debug(
-            f'Initialize cache engine with {cache_config.num_gpu_blocks}'
-            f' gpu blocks and {cache_config.num_cpu_blocks} cpu blocks.')
 
     @property
     def cpu_cache(self):
@@ -184,45 +174,7 @@ class CacheEngine:
             )
             cpu_cache.append((key_blocks, value_blocks))
         return cpu_cache
-
-    @torch.inference_mode()
-    def _swap(self, src: List[KVCache], dst: List[KVCache],
-              src_to_dst: Dict[int, int]):
-        """Move caches from src memory to dst memory.
-
-        Args:
-            src (List[KVCache]): Source cache.
-            dst (List[KVCache]): Destination cache.
-            src_to_dst (Dict[int, int]): Map between src and dst.
-        """
-        with torch.cuda.stream(self.cache_stream):
-            for i in range(self.num_layers):
-                src_key_cache, src_value_cache = src[i]
-                dst_key_cache, dst_value_cache = dst[i]
-
-                for src_id, dst_id in src_to_dst.items():
-                    dst_key_cache[dst_id].copy_(src_key_cache[src_id])
-                    dst_value_cache[dst_id].copy_(src_value_cache[src_id])
-
-                    event = self.events[i]
-                    event.record(stream=self.cache_stream)
-
-    def swap_in(self, src_to_dst: Dict[int, int]) -> None:
-        """Move cache from Host to Device.
-
-        Args:
-            src_to_dst (Dict[int, int]): Map between src and dst.
-        """
-        self._swap(self.local_cpu_cache, self.local_gpu_cache, src_to_dst)
-
-    def swap_out(self, src_to_dst: Dict[int, int]) -> None:
-        """Move cache from Device to Host.
-
-        Args:
-            src_to_dst (Dict[int, int]): Map between src and dst.
-        """
-        self._swap(self.local_gpu_cache, self.local_cpu_cache, src_to_dst)
-
+    
     @classmethod
     def get_cache_block_size(cls,
                              block_size: int,
@@ -265,3 +217,124 @@ class CacheEngine:
         mem_value_block = value_block.numel() * value_block.element_size()
         total = num_layers * (mem_key_block + mem_value_block)
         return total
+
+    def swap_in(self):
+        raise NotImplementedError
+
+    def swap_out(self):
+        raise NotImplementedError
+
+class CacheEngine(BaseCacheEngine):
+    """Host and Device memory maintainer.
+
+    Args:
+        cache_config (CacheConfig): config of the cache information.
+        model_config (ModelConfig): config of the model.
+        rank (int): distribution rank, 0 on non-distributed environment.
+        world_size (int): distribution world size, 1 on non-distributed
+            environment.
+    """
+
+    def __init__(
+        self,
+        cache_config: CacheConfig,
+        model_config: ModelConfig,
+        rank: int = 0,
+        world_size: int = 1,
+    ) -> None:
+        super.__init__(cache_config, model_config, rank, world_size)
+        # Initialize the stream for caching operations.
+        self.cache_stream = torch.cuda.Stream()
+        assert self.cache_stream != torch.cuda.current_stream()
+        # Initialize the events for stream synchronization.
+        self.events = [torch.cuda.Event() for _ in range(self.num_layers)]
+
+        logger.debug(
+            f'Initialize cache engine with {cache_config.num_gpu_blocks}'
+            f' gpu blocks and {cache_config.num_cpu_blocks} cpu blocks.')
+
+    @torch.inference_mode()
+    def _swap(self, src: List[KVCache], dst: List[KVCache],
+              src_to_dst: Dict[int, int]):
+        """Move caches from src memory to dst memory.
+
+        Args:
+            src (List[KVCache]): Source cache.
+            dst (List[KVCache]): Destination cache.
+            src_to_dst (Dict[int, int]): Map between src and dst.
+        """
+        with torch.cuda.stream(self.cache_stream):
+            for i in range(self.num_layers):
+                src_key_cache, src_value_cache = src[i]
+                dst_key_cache, dst_value_cache = dst[i]
+
+                for src_id, dst_id in src_to_dst.items():
+                    dst_key_cache[dst_id].copy_(src_key_cache[src_id])
+                    dst_value_cache[dst_id].copy_(src_value_cache[src_id])
+
+                    event = self.events[i]
+                    event.record(stream=self.cache_stream)
+
+    def swap_in(self, src_to_dst: Dict[int, int]) -> None:
+        """Move cache from Host to Device.
+
+        Args:
+            src_to_dst (Dict[int, int]): Map between src and dst.
+        """
+        self._swap(self.local_cpu_cache, self.local_gpu_cache, src_to_dst)
+
+    def swap_out(self, src_to_dst: Dict[int, int]) -> None:
+        """Move cache from Device to Host.
+
+        Args:
+            src_to_dst (Dict[int, int]): Map between src and dst.
+        """
+        self._swap(self.local_gpu_cache, self.local_cpu_cache, src_to_dst)
+
+
+class CPUCacheEngine(BaseCacheEngine):
+    """
+    gpu_cache as main memory, cpu_cache as offloading mem
+    """
+    def __init__(
+        self,
+        cache_config: CacheConfig,
+        model_config: ModelConfig,
+        rank: int = 0,
+        world_size: int = 1,
+    ) -> None:
+        super.__init__(cache_config, model_config, rank, world_size)
+        assert self.cache_config.num_cpu_blocks == 0
+        logger.debug(
+            f'Initialize cache engine with {cache_config.num_gpu_blocks} cpu blocks.')
+
+    @property
+    def cpu_cache(self):
+        raise NotImplementedError
+
+    def allocate_gpu_cache(self):
+        cpu_cache: List[KVCache] = []
+        key_block_shape = self.get_key_block_shape(local=True)
+        value_block_shape = self.get_value_block_shape(local=True)
+
+        # TODO: pin memory might need be banned on wsl
+        pin_memory = True
+
+        for _ in range(self.num_layers):
+            key_blocks = torch.empty(
+                size=(self.num_gpu_blocks, *key_block_shape),
+                dtype=self.kv_cache_dtype,
+                pin_memory=pin_memory,
+            )
+            value_blocks = torch.empty(
+                size=(self.num_gpu_blocks, *value_block_shape),
+                dtype=self.kv_cache_dtype,
+                pin_memory=pin_memory,
+            )
+            cpu_cache.append((key_blocks, value_blocks))
+        return cpu_cache
+        
+        
+    def allocate_cpu_cache(self):
+        return None
+    

@@ -17,13 +17,70 @@ from ..devices import DeviceContext, get_device_manager
 from ..model_inputs import ModelInputs
 from ..models.patch import (add_adapters, build_patched_model,
                             update_custom_module_map)
-from ..utils import get_gpu_memory
+from ..utils import get_gpu_memory, get_cpu_memory
 from ..weight_loader.model_weight_loader import load_model_weights
-from .cache_engine import CacheEngine
+from .cache_engine import CacheEngine, CPUCacheEngine
 
 logger = get_logger('lmdeploy')
 
 
+def __get_runtime_size(cache_config: CacheConfig,
+                        num_free_gpu_mem: int,
+                        cache_block_size: int,
+                        vocal_size: int):
+    """find best prefill num."""
+    cache_max_entry_count = cache_config.cache_max_entry_count
+    max_prefill_token_num = cache_config.max_prefill_token_num
+    runtime_cache_size = 0
+    while max_prefill_token_num > 0:
+        # lm_head output(2) + to float(4) + estimated misc(1) = 7
+        runtime_cache_size = int(max_prefill_token_num * vocal_size * 7)
+        num_available = (num_free_gpu_mem -
+                            runtime_cache_size) * cache_max_entry_count
+        if int(num_available) // cache_block_size >= 16:
+            break
+        max_prefill_token_num = max_prefill_token_num // 2
+    return runtime_cache_size, max_prefill_token_num
+
+def __get_free_gpu_mem_size(model_config: ModelConfig,
+                            cache_config: CacheConfig,
+                            gpu_id: int,
+                            cache_block_size: int):
+    """get free gpu memory size."""
+    torch.cuda.empty_cache()
+    gpu_mem_physical_free, _ = get_gpu_memory(gpu_id)
+    logger.debug(f'device<{gpu_id}> free gpu memory:'
+                    f' {gpu_mem_physical_free>>20} mb')
+    vocal_size = model_config.vocab_size
+
+    runtime_cache_size, max_prefill_token_num = __get_runtime_size(
+        gpu_mem_physical_free, cache_block_size, vocal_size)
+    if cache_config.max_prefill_token_num != max_prefill_token_num:
+        if max_prefill_token_num <= 0:
+            raise RuntimeError('No enough gpu memory for runtime.')
+        cache_config.max_prefill_token_num = max_prefill_token_num
+        logger.warning(f'device<{gpu_id}> No enough memory. '
+                        'update max_prefill_token_num='
+                        f'{max_prefill_token_num}')
+    gpu_mem_physical_free -= runtime_cache_size
+    logger.debug('estimated max runtime memory:'
+                    f' {runtime_cache_size>>20} mb')
+    return gpu_mem_physical_free * cache_config.cache_max_entry_count
+
+def __adjust_block_size(model_config: ModelConfig,
+                        cache_config: CacheConfig):
+    """adjust block_size."""
+    # TODO: support kernel with both large head dim and large block size.
+    if model_config.k_head_dim >= 512 and cache_config.block_size > 32:
+        cache_config.block_size = 32
+        rank = 0
+        if dist.is_initialized():
+            rank = dist.get_rank()
+        if rank == 0:
+            logger.warning(
+                f'Update `block_size={cache_config.block_size}`'
+                f' for large `head_dim={model_config.k_head_dim}`.')
+            
 def _update_cache_config(model_config: ModelConfig,
                          cache_config: CacheConfig,
                          gpu_id: int = 0,
@@ -36,63 +93,11 @@ def _update_cache_config(model_config: ModelConfig,
         cache_config (CacheConfig): The config of the cache info.
         gpu_id (int): The GPU id to use.
     """
-
-    def __get_runtime_size(num_free_gpu_mem: int, cache_block_size: int,
-                           vocal_size: int):
-        """find best prefill num."""
-        cache_max_entry_count = cache_config.cache_max_entry_count
-        max_prefill_token_num = cache_config.max_prefill_token_num
-        runtime_cache_size = 0
-        while max_prefill_token_num > 0:
-            # lm_head output(2) + to float(4) + estimated misc(1) = 7
-            runtime_cache_size = int(max_prefill_token_num * vocal_size * 7)
-            num_available = (num_free_gpu_mem -
-                             runtime_cache_size) * cache_max_entry_count
-            if int(num_available) // cache_block_size >= 16:
-                break
-            max_prefill_token_num = max_prefill_token_num // 2
-        return runtime_cache_size, max_prefill_token_num
-
-    def __get_free_gpu_mem_size(cache_block_size: int):
-        """get free gpu memory size."""
-        torch.cuda.empty_cache()
-        gpu_mem_physical_free, _ = get_gpu_memory(gpu_id)
-        logger.debug(f'device<{gpu_id}> free gpu memory:'
-                     f' {gpu_mem_physical_free>>20} mb')
-        vocal_size = model_config.vocab_size
-
-        runtime_cache_size, max_prefill_token_num = __get_runtime_size(
-            gpu_mem_physical_free, cache_block_size, vocal_size)
-        if cache_config.max_prefill_token_num != max_prefill_token_num:
-            if max_prefill_token_num <= 0:
-                raise RuntimeError('No enough gpu memory for runtime.')
-            cache_config.max_prefill_token_num = max_prefill_token_num
-            logger.warning(f'device<{gpu_id}> No enough memory. '
-                           'update max_prefill_token_num='
-                           f'{max_prefill_token_num}')
-        gpu_mem_physical_free -= runtime_cache_size
-        logger.debug('estimated max runtime memory:'
-                     f' {runtime_cache_size>>20} mb')
-        return gpu_mem_physical_free * cache_config.cache_max_entry_count
-
-    def __adjust_block_size():
-        """adjust block_size."""
-        # TODO: support kernel with both large head dim and large block size.
-        if model_config.k_head_dim >= 512 and cache_config.block_size > 32:
-            cache_config.block_size = 32
-            rank = 0
-            if dist.is_initialized():
-                rank = dist.get_rank()
-            if rank == 0:
-                logger.warning(
-                    f'Update `block_size={cache_config.block_size}`'
-                    f' for large `head_dim={model_config.k_head_dim}`.')
-
-    __adjust_block_size()
+    __adjust_block_size(model_config, cache_config)
 
     cache_block_size = CacheEngine.get_cache_block_size(
         cache_config.block_size, model_config, world_size)
-    gpu_mem = __get_free_gpu_mem_size(cache_block_size)
+    gpu_mem = __get_free_gpu_mem_size(model_config, cache_config, gpu_id, cache_block_size)
     cpu_mem = host_mem_size
     if cache_config.num_cpu_blocks == 0:
         cache_config.num_cpu_blocks = int(cpu_mem / cache_block_size)
@@ -715,6 +720,147 @@ class TPModelAgent(AutoModelAgent):
         return self.patched_model.get_logits(hidden_states)
 
 
+@torch.inference_mode()
+def cpu_model_forward(
+    model: torch.nn.Module,
+    inputs: ModelInputs,
+    cache_engine: CacheEngine,
+    world_size: int = 1):
+    """perform model forward."""
+    # forward
+    inputs = inputs.to_device('cpu')
+    ctx_mgr = model.ctx_mgr
+    context = ctx_mgr.build_context(
+        inputs=inputs,
+        world_size=world_size
+    )
+    with ctx_mgr.context(context):
+        input_dict = model.prepare_inputs_for_generation(
+            past_key_values=cache_engine.gpu_cache,
+            context=context,
+        )
+        output = model(**input_dict)
+    return dict(hidden_states=output)
+
+ 
+def __get_free_cpu_mem_size(model_config: ModelConfig,
+                            cache_config: CacheConfig,
+                            cache_block_size: int):
+    """get free cpu memory size."""
+    vocal_size = model_config.vocab_size
+    cpu_mem_physical_free, cpu_mem_total = get_cpu_memory()
+    runtime_cache_size, max_prefill_token_num = __get_runtime_size(
+        cpu_mem_physical_free, cache_block_size, vocal_size)
+    if cache_config.max_prefill_token_num != max_prefill_token_num:
+        if max_prefill_token_num <= 0:
+            raise RuntimeError('No enough cpu memory for runtime.')
+        cache_config.max_prefill_token_num = max_prefill_token_num
+        logger.warning(f'device<cpu> No enough memory. '
+                        'update max_prefill_token_num='
+                        f'{max_prefill_token_num}')
+    cpu_mem_physical_free -= runtime_cache_size
+    logger.debug('estimated max runtime memory:'
+                    f' {runtime_cache_size>>20} mb')
+    return cpu_mem_physical_free * cache_config.cache_max_entry_count
+
+            
+def _update_cpu_cache_config(model_config: ModelConfig,
+                         cache_config: CacheConfig,
+                         world_size: int = 1):
+    """Update the gpu mem and cpu mem according to model info.
+
+    Args:
+        model_config (ModelConfig): The config of the model.
+        cache_config (CacheConfig): The config of the cache info.
+    """
+    __adjust_block_size(model_config, cache_config)
+    
+    cache_block_size = CPUCacheEngine.get_cache_block_size(
+        cache_config.block_size, model_config, world_size)
+    cpu_mem = __get_free_cpu_mem_size(model_config, cache_config, cache_block_size)
+
+    if cache_config.num_gpu_blocks == 0:
+        cache_config.num_gpu_blocks = int(cpu_mem / cache_block_size)
+        if cache_config.num_gpu_blocks <= 0:
+            raise RuntimeError('No enough host memory for kv cache.')
+    cache_config.window_size = model_config.sliding_window
+
+    logger.debug('block num: {}'.format(cache_config.num_gpu_blocks))
+
+
+class CPUModelAgent(AutoModelAgent):
+    """CPU model agent.
+    """
+    def __init__(self,
+                 model_path: str,
+                 model_config: ModelConfig,
+                 cache_config: CacheConfig,
+                 backend_config: BackendConfig,
+                 adapters: Dict[str, str] = None,
+                 trust_remote_code: bool = True):
+        super().__init__(model_config=model_config, cache_config=cache_config)
+        device = 'cpu'
+        self.backend_config = backend_config
+        self._adapters = adapters
+
+        self.patched_model = self._build_model(model_path,
+                                               adapters,
+                                               device=device)
+
+        _update_cpu_cache_config(model_config, cache_config)
+
+        backend = get_backend()
+        self.patched_model = backend.build_graph_runner(
+            self.patched_model,
+            model_config=model_config,
+            cache_config=cache_config,
+            backend_config=backend_config,
+            device=device)
+
+        self.cache_engine = CPUCacheEngine(cache_config, model_config)
+        
+        
+    def _build_model(self,
+                     model_path: str,
+                     adapters: Dict[str, str] = None,
+                     device: torch.device = 'cpu'):
+        """build patched model."""
+        custom_module_map = self.model_config.custom_module_map
+        if custom_module_map is not None:
+            update_custom_module_map(custom_module_map)
+        logger.info('build model.')
+        patched_model = build_patched_model(self.model_config, device=device)
+        logger.info('loading weights.')
+        load_model_weights(patched_model, model_path, device=device)
+        logger.info('loading adapters.')
+        if adapters is not None:
+            add_adapters(patched_model,
+                         adapters,
+                         dtype=self.model_config.dtype,
+                         device=device)
+        return patched_model
+
+    def get_block_numel(self):
+        raise NotImplementedError
+    
+    def _forard_impl(self, inputs: ModelInputs):
+        return cpu_model_forward(self.patched_model,
+                          inputs,
+                          self.cache_engine,
+                          world_size=1)
+        
+    async def async_forward(self, inputs: ModelInputs, **kwargs):
+        output = await asyncio.get_event_loop().run_in_executor(None, self._forward_impl, inputs)
+        return output
+    
+    def forward(self, inputs: ModelInputs, **kwargs):
+        return self._forard_impl(inputs)
+        
+    def get_logits(self, hidden_states: torch.Tensor):
+        """get logits of model output."""
+        return self.patched_model.get_logits(hidden_states)
+
+
 def _exit_by_sending_exit_flag(rank: int, agent: TPModelAgent):
     """[Note] Exit By Sending Exit Flag: the registration to `atexit` of this
     function should be called after importing torch.multiprocessing and the
@@ -744,6 +890,7 @@ def _exit_by_sending_exit_flag(rank: int, agent: TPModelAgent):
     del agent.patched_model
 
 
+    
 def build_model_agent(model_path: str,
                       cache_config: CacheConfig,
                       backend_config: BackendConfig,
@@ -767,7 +914,14 @@ def build_model_agent(model_path: str,
     model_config = ModelConfig.from_pretrained(
         model_path, trust_remote_code=trust_remote_code, dtype=dtype)
     model_config.custom_module_map = custom_module_map
-    if tp == 1:
+    if backend_config.device == 'cpu':
+        model_agent = CPUModelAgent(model_path,
+                                     model_config=model_config,
+                                     cache_config=cache_config,
+                                     backend_config=backend_config,
+                                     adapters=adapters,
+                                     trust_remote_code=trust_remote_code)
+    elif tp == 1:
         model_agent = BaseModelAgent(model_path,
                                      model_config=model_config,
                                      cache_config=cache_config,

@@ -14,8 +14,9 @@ def get_gpu_memory(id: int = 0) -> int:
 
 
 def get_cpu_memory() -> int:
-    """Returns the total CPU memory of the node in bytes."""
-    return psutil.virtual_memory().total
+    """Returns the available and total CPU memory of the node in bytes."""
+    mem_info = psutil.virtual_memory()
+    return mem_info.available, mem_info.total
 
 
 def bind_sigature(input_names: str, args: Sequence, kwargs: Dict):
