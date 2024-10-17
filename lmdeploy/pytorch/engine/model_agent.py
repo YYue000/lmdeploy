@@ -54,7 +54,7 @@ def __get_free_gpu_mem_size(model_config: ModelConfig,
     vocal_size = model_config.vocab_size
 
     runtime_cache_size, max_prefill_token_num = __get_runtime_size(
-        gpu_mem_physical_free, cache_block_size, vocal_size)
+        cache_config, gpu_mem_physical_free, cache_block_size, vocal_size)
     if cache_config.max_prefill_token_num != max_prefill_token_num:
         if max_prefill_token_num <= 0:
             raise RuntimeError('No enough gpu memory for runtime.')
@@ -914,7 +914,7 @@ def build_model_agent(model_path: str,
     model_config = ModelConfig.from_pretrained(
         model_path, trust_remote_code=trust_remote_code, dtype=dtype)
     model_config.custom_module_map = custom_module_map
-    if backend_config.device == 'cpu':
+    if backend_config.device_type == 'cpu':
         model_agent = CPUModelAgent(model_path,
                                      model_config=model_config,
                                      cache_config=cache_config,

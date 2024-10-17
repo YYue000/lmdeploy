@@ -16,7 +16,7 @@ def get_backend():
         from .ascend import AscendOpsBackend
         return AscendOpsBackend
     if device_type == 'cpu':
-        from .default import DefaultOpsBackend
-        return DefaultOpsBackend
+        from .cpu import CPUOpsBackend
+        return CPUOpsBackend
     else:
         raise RuntimeError(f'Unsupported device type: {device_type}')

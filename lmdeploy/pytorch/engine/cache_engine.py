@@ -242,7 +242,7 @@ class CacheEngine(BaseCacheEngine):
         rank: int = 0,
         world_size: int = 1,
     ) -> None:
-        super.__init__(cache_config, model_config, rank, world_size)
+        super().__init__(cache_config, model_config, rank, world_size)
         # Initialize the stream for caching operations.
         self.cache_stream = torch.cuda.Stream()
         assert self.cache_stream != torch.cuda.current_stream()
@@ -303,7 +303,7 @@ class CPUCacheEngine(BaseCacheEngine):
         rank: int = 0,
         world_size: int = 1,
     ) -> None:
-        super.__init__(cache_config, model_config, rank, world_size)
+        super().__init__(cache_config, model_config, rank, world_size)
         assert self.cache_config.num_cpu_blocks == 0
         logger.debug(
             f'Initialize cache engine with {cache_config.num_gpu_blocks} cpu blocks.')
