@@ -724,7 +724,7 @@ class TPModelAgent(AutoModelAgent):
 def cpu_model_forward(
     model: torch.nn.Module,
     inputs: ModelInputs,
-    cache_engine: CacheEngine,
+    cache_engine: CPUCacheEngine,
     world_size: int = 1):
     """perform model forward."""
     # forward
@@ -734,15 +734,19 @@ def cpu_model_forward(
         inputs=inputs,
         world_size=world_size
     )
-    with ctx_mgr.context(context):
+    
+    amp_enabled = True if model.dtype != "float32" else False
+    with ctx_mgr.context(context), torch.amp.autocast(device="cpu", enabled=amp_enabled):
         input_dict = model.prepare_inputs_for_generation(
-            past_key_values=cache_engine.gpu_cache,
+            past_key_values=cache_engine.get_cache(),
             context=context,
         )
         output = model(**input_dict)
+        kv_cache = context._outputs.pop("past_key_values")
+        cache_engine.update_cache(kv_cache)
     return dict(hidden_states=output)
 
- 
+
 def __get_free_cpu_mem_size(model_config: ModelConfig,
                             cache_config: CacheConfig,
                             cache_block_size: int):
@@ -799,55 +803,38 @@ class CPUModelAgent(AutoModelAgent):
                  adapters: Dict[str, str] = None,
                  trust_remote_code: bool = True):
         super().__init__(model_config=model_config, cache_config=cache_config)
-        device = 'cpu'
         self.backend_config = backend_config
-        self._adapters = adapters
 
-        self.patched_model = self._build_model(model_path,
-                                               adapters,
-                                               device=device)
+        self.patched_model = self._build_model(model_path)
 
         _update_cpu_cache_config(model_config, cache_config)
-
-        backend = get_backend()
-        self.patched_model = backend.build_graph_runner(
-            self.patched_model,
-            model_config=model_config,
-            cache_config=cache_config,
-            backend_config=backend_config,
-            device=device)
 
         self.cache_engine = CPUCacheEngine(cache_config, model_config)
         
         
-    def _build_model(self,
-                     model_path: str,
-                     adapters: Dict[str, str] = None,
-                     device: torch.device = 'cpu'):
+    def _build_model(self, model_name: str):
         """build patched model."""
-        custom_module_map = self.model_config.custom_module_map
-        if custom_module_map is not None:
-            update_custom_module_map(custom_module_map)
-        logger.info('build model.')
-        patched_model = build_patched_model(self.model_config, device=device)
-        logger.info('loading weights.')
-        load_model_weights(patched_model, model_path, device=device)
-        logger.info('loading adapters.')
-        if adapters is not None:
-            add_adapters(patched_model,
-                         adapters,
-                         dtype=self.model_config.dtype,
-                         device=device)
+        from transformers import AutoModelForCausalLM, AutoConfig
+        import intel_extension_for_pytorch as ipex
+        config = AutoConfig.from_pretrained(model_name, torchscript=True, return_dict=True, output_hidden_states=True)
+
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=self.model_config.dtype, config=config, low_cpu_mem_usage=True, trust_remote_code=True)
+        model = model.to(memory_format=torch.channels_last)
+        model = model.eval()
+        model = ipex.llm.optimize(model, dtype=self.model_config.dtype, inplace=True, deployment_mode=True)
+        from lmdeploy.pytorch.models.wrapper_causallm import WrapperForCausalLM
+        patched_model = WrapperForCausalLM(model)
         return patched_model
 
     def get_block_numel(self):
         raise NotImplementedError
     
     def _forard_impl(self, inputs: ModelInputs):
-        return cpu_model_forward(self.patched_model,
+        outputs = cpu_model_forward(self.patched_model,
                           inputs,
                           self.cache_engine,
                           world_size=1)
+        return outputs
         
     async def async_forward(self, inputs: ModelInputs, **kwargs):
         output = await asyncio.get_event_loop().run_in_executor(None, self._forward_impl, inputs)
