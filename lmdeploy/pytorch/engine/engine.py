@@ -105,7 +105,7 @@ class Engine:
             check_adapters(list(adapters.values()))
         assert engine_config.max_batch_size > 0, 'max_batch_size should be' \
             f' greater than 0, but got {engine_config.max_batch_size}'
-        assert engine_config.dtype in ['auto', 'float16', 'bfloat16'], \
+        assert engine_config.dtype in ['auto', 'float16', 'bfloat16', "float32"], \
             f'unsupported specified data type {engine_config.dtype}'
 
         self.engine_config = engine_config

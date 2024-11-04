@@ -807,9 +807,9 @@ class CPUModelAgent(AutoModelAgent):
 
         self.patched_model = self._build_model(model_path)
 
-        _update_cpu_cache_config(model_config, cache_config)
+        # _update_cpu_cache_config(model_config, cache_config)
 
-        self.cache_engine = CPUCacheEngine(cache_config, model_config)
+        self.cache_engine = CPUCacheEngine()
         
         
     def _build_model(self, model_name: str):

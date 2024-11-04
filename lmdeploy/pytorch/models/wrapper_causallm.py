@@ -5,6 +5,7 @@ from lmdeploy.pytorch.model_inputs import StepContext, StepContextManager
 
 class WrapperForCausalLM(nn.Module):
     def __init__(self, model):
+        super().__init__()
         self.model = model
         self.ctx_mgr = StepContextManager()
         self.lm_head = model.lm_head

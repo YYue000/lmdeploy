@@ -278,7 +278,7 @@ class PytorchEngineConfig:
 
     def __post_init__(self):
         """Check input validation."""
-        assert self.dtype in ['auto', 'float16', 'bfloat16']
+        assert self.dtype in ['auto', 'float16', 'bfloat16', "float32"]
         assert self.tp >= 1, 'invalid tp'
         assert 0 < self.cache_max_entry_count < 1, \
             'invalid cache_max_entry_count'
