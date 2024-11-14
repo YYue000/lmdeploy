@@ -105,3 +105,9 @@ class WrapperForCausalLM(nn.Module):
         model_inputs = self.model.prepare_inputs_for_generation(**model_inputs)
         model_inputs["first_token"] = first_token
         return model_inputs
+    
+    def __str__(self) -> str:
+        return "self.model.model=\n" + self.model.model.__str__() + "\n" + "self.lm_head:\=\n" + self.lm_head.__str__()
+    
+    def __repr__(self):
+        return "self.model.model=\n" + self.model.model.__repr__() + "\n" + "self.lm_head:\=\n" + self.lm_head.__repr__()

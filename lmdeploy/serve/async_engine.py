@@ -185,6 +185,7 @@ class AsyncEngine(LogitsMixin):
             self.gens_set.add(self.engine.create_instance())
         self._session_id = count(0)
         self.request_logger = RequestLogger(max_log_len)
+        
 
     def _build_turbomind(
             self,
@@ -341,6 +342,7 @@ class AsyncEngine(LogitsMixin):
 
         async def _inner_call(i, generator):
             async for out in generator:
+                print(i,out)
                 outputs[i].text += out.response
                 outputs[i].generate_token_len = out.generate_token_len
                 outputs[i].input_token_len = out.input_token_len
@@ -492,7 +494,7 @@ class AsyncEngine(LogitsMixin):
         if gen_config is None:
             gen_config = GenerationConfig()
         else:
-            gen_config = deepcopy(gen_config)
+            gen_config = deepcopy(gen_config)   
         gen_config.convert_stop_bad_words_to_ids(self.tokenizer)
         if gen_config.stop_token_ids is None:
             gen_config.stop_token_ids = self.stop_words
@@ -551,7 +553,6 @@ class AsyncEngine(LogitsMixin):
             if sequence_end is True and sequence_start is False:
                 await self.end_session(session_id)
         else:
-
             def is_error(status):
                 return status not in [
                     ResponseType.SUCCESS, ResponseType.FINISH

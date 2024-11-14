@@ -18,6 +18,6 @@ tiktoken
 torch==2.4
 torchvision
 intel-extension-for-pytorch
-transformers
+transformers==4.45
 triton>=2.1.0,<=3.0.0; sys_platform == "linux"
 uvicorn

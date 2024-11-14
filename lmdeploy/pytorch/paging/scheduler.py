@@ -10,7 +10,7 @@ from ..config import CacheConfig, SchedulerConfig
 from ..messages import (MessageStatus, SchedulerSequence, SchedulerSession,
                         SequenceManager)
 from .block_manager import build_block_manager
-from .block_trie import BlockTrie
+from .block_trie import build_block_trie
 
 logger = get_logger('lmdeploy')
 
@@ -43,7 +43,7 @@ class Scheduler:
         self.sessions: Dict[int, SchedulerSession] = OrderedDict()
 
         self.block_manager = build_block_manager(cache_config)
-        self.block_trie = BlockTrie(self.cache_config, self.block_manager)
+        self.block_trie = build_block_trie(self.cache_config, self.block_manager)
 
         self.eviction_helper = self.build_eviction_helper(
             self.scheduler_config.eviction_type)

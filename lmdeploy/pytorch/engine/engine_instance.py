@@ -93,6 +93,8 @@ class EngineInstance:
         def __get_max_input_len(engine):
             """get max input len."""
             cache_config = engine.cache_config
+            if cache_config.num_gpu_blocks == 0:
+                return cache_config.max_prefill_token_num
             max_input_len = (cache_config.block_size *
                              cache_config.num_gpu_blocks)
             window_size = cache_config.window_size
@@ -171,11 +173,11 @@ class EngineInstance:
                    mrope_position_delta=kwargs.get('mrope_position_delta'))
         req_id = await self.req_sender.async_send_async(
             RequestType.ADD_MESSAGE, msg)
-
+        print("reqid", req_id)
         token_ids = []
         while True:
             resp = await self.req_sender.async_recv(req_id)
-
+            print("resp", resp)
             if resp.req_id != req_id:
                 continue
             if resp.type == ResponseType.SUCCESS:

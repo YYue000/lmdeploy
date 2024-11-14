@@ -74,8 +74,9 @@ class CacheConfig:
     num_gpu_blocks: int
     window_size: int = -1
     cache_max_entry_count: float = 0.8
-    max_prefill_token_num: int = 4096
+    max_prefill_token_num: int = None
     enable_prefix_caching: bool = False
+    host: str = "cuda"
 
     def __post_init__(self):
         """post init."""
@@ -163,3 +164,7 @@ class ModelConfig:
             model_config.eos_token_id = [model_config.eos_token_id]
 
         return model_config
+
+@dataclass
+class Constants:
+    _DEFAULT_PREFILL_MAX_LENGTH = 4096

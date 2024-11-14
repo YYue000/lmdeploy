@@ -5,7 +5,9 @@ import os
 from datetime import timedelta
 from typing import Any, Callable, Dict, List
 
+from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
 import torch
+import intel_extension_for_pytorch as ipex
 import torch.distributed as dist
 from torch import multiprocessing as mp
 
@@ -22,6 +24,8 @@ from ..weight_loader.model_weight_loader import load_model_weights
 from .cache_engine import CacheEngine, CPUCacheEngine
 
 logger = get_logger('lmdeploy')
+
+from ..config import Constants
 
 
 def __get_runtime_size(cache_config: CacheConfig,
@@ -93,6 +97,9 @@ def _update_cache_config(model_config: ModelConfig,
         cache_config (CacheConfig): The config of the cache info.
         gpu_id (int): The GPU id to use.
     """
+    if cache_config.max_prefill_token_num is None:
+        cache_config.max_prefill_token_num = Constants._DEFAULT_PREFILL_MAX_LENGTH
+        
     __adjust_block_size(model_config, cache_config)
 
     cache_block_size = CacheEngine.get_cache_block_size(
@@ -766,9 +773,8 @@ def __get_free_cpu_mem_size(model_config: ModelConfig,
     logger.debug('estimated max runtime memory:'
                     f' {runtime_cache_size>>20} mb')
     return cpu_mem_physical_free * cache_config.cache_max_entry_count
-
             
-def _update_cpu_cache_config(model_config: ModelConfig,
+def _update_cpu_cache_config_deprecated(model_config: ModelConfig,
                          cache_config: CacheConfig,
                          world_size: int = 1):
     """Update the gpu mem and cpu mem according to model info.
@@ -791,6 +797,34 @@ def _update_cpu_cache_config(model_config: ModelConfig,
 
     logger.debug('block num: {}'.format(cache_config.num_gpu_blocks))
 
+def _update_cpu_cache_config(hf_config: AutoConfig,
+                         cache_config: CacheConfig,
+                         world_size: int = 1):
+    """Update the gpu mem and cpu mem according to model info.
+
+    Args:
+        hf_config (ModelConfig): The config of the model.
+        cache_config (CacheConfig): The config of the cache info.
+    """
+    cache_config.host = "cpu"
+    cache_config.max_prefill_token_num = _get_max_length(cache_config, hf_config)
+
+def _get_max_length(cache_config: CacheConfig,
+                    hf_config: AutoConfig):
+    if cache_config.max_prefill_token_num:  # if max length manually set, return it
+        return cache_config.max_prefill_token_num
+    seqlen_config_attrs = ("n_positions", "max_position_embeddings", "n_ctx")
+    for attr in seqlen_config_attrs:
+        if hasattr(hf_config, attr):
+            return getattr(hf_config, attr)
+    
+    # tokenizer = AutoTokenizer.from_pretrained(hf_config._name_or_path)
+    # if hasattr(tokenizer, "model_max_length"):
+        # if tokenizer.model_max_length == 1000000000000000019884624838656:
+            # return Constants._DEFAULT_PREFILL_MAX_LENGTH
+        # return tokenizer.model_max_length
+
+    return Constants._DEFAULT_PREFILL_MAX_LENGTH
 
 class CPUModelAgent(AutoModelAgent):
     """CPU model agent.
@@ -807,29 +841,30 @@ class CPUModelAgent(AutoModelAgent):
 
         self.patched_model = self._build_model(model_path)
 
-        # _update_cpu_cache_config(model_config, cache_config)
+        _update_cpu_cache_config(self.patched_model.model.config, cache_config)
 
         self.cache_engine = CPUCacheEngine()
         
         
     def _build_model(self, model_name: str):
         """build patched model."""
-        from transformers import AutoModelForCausalLM, AutoConfig
-        import intel_extension_for_pytorch as ipex
-        config = AutoConfig.from_pretrained(model_name, torchscript=True, return_dict=True, output_hidden_states=True)
-
+        config = AutoConfig.from_pretrained(model_name, torchscript=True, return_dict=True, output_hidden_states=True) # , return_dict_in_generate=True
         model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=self.model_config.dtype, config=config, low_cpu_mem_usage=True, trust_remote_code=True)
         model = model.to(memory_format=torch.channels_last)
         model = model.eval()
         model = ipex.llm.optimize(model, dtype=self.model_config.dtype, inplace=True, deployment_mode=True)
         from lmdeploy.pytorch.models.wrapper_causallm import WrapperForCausalLM
         patched_model = WrapperForCausalLM(model)
-        return patched_model
+        
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        inputs = tokenizer("hi, pls introduce yourself.", return_tensors="pt")
+        gen_tokens = model.generate(**inputs)
+        print(tokenizer.batch_decode(gen_tokens))
 
-    def get_block_numel(self):
-        raise NotImplementedError
+        return patched_model
     
     def _forard_impl(self, inputs: ModelInputs):
+        print("hi forward!")
         outputs = cpu_model_forward(self.patched_model,
                           inputs,
                           self.cache_engine,

@@ -214,3 +214,15 @@ class BlockTrie:
         self.allocator.free(np.array(evicted_blocks))
 
         return len(evicted_blocks)
+
+
+class DummyBlockTrie:
+    def match(self, seq: SchedulerSequence):
+        return
+    def allocate(self, seq: SchedulerSequence):
+        return
+    
+def build_block_trie(cache_config: CacheConfig, block_manager: BaseBlockManager):
+    if cache_config.host == "cpu":
+        return DummyBlockTrie()
+    return BlockTrie(cache_config, block_manager)

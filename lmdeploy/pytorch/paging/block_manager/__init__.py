@@ -3,7 +3,7 @@ from ...config import CacheConfig
 from .base_block_manager import BaseBlockManager
 from .default_block_manager import DefaultBlockManager
 from .window_block_manager import WindowBlockManager
-
+from .cpu_block_manager import CPUBlockManager
 
 def build_block_manager(cache_config: CacheConfig) -> BaseBlockManager:
     """build block manager.
@@ -11,7 +11,9 @@ def build_block_manager(cache_config: CacheConfig) -> BaseBlockManager:
     Args:
         cache_config (CacheConfig):  cache_config.
     """
-
+    if cache_config.host == "cpu":
+        return CPUBlockManager()
+    
     num_cpu_blocks = cache_config.num_cpu_blocks
     num_gpu_blocks = cache_config.num_gpu_blocks
     window_size = cache_config.window_size
