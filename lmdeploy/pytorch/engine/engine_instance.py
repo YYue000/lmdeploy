@@ -173,11 +173,11 @@ class EngineInstance:
                    mrope_position_delta=kwargs.get('mrope_position_delta'))
         req_id = await self.req_sender.async_send_async(
             RequestType.ADD_MESSAGE, msg)
-        print("reqid", req_id)
+        # print("reqid", req_id)
         token_ids = []
         while True:
             resp = await self.req_sender.async_recv(req_id)
-            print("resp", resp)
+            # print("resp", resp)
             if resp.req_id != req_id:
                 continue
             if resp.type == ResponseType.SUCCESS:

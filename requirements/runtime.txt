@@ -15,7 +15,7 @@ safetensors
 sentencepiece
 shortuuid
 tiktoken
-torch==2.4
+torch==2.4.0
 torchvision
 intel-extension-for-pytorch
 transformers==4.45

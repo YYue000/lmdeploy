@@ -5,7 +5,7 @@ import os
 from datetime import timedelta
 from typing import Any, Callable, Dict, List
 
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+from transformers import AutoConfig
 import torch
 import intel_extension_for_pytorch as ipex
 import torch.distributed as dist
@@ -232,7 +232,6 @@ class BaseModelAgent(AutoModelAgent):
         self.patched_model = self._build_model(model_path,
                                                adapters,
                                                device=device)
-
         _update_cache_config(model_config, cache_config)
 
         backend = get_backend()
@@ -277,6 +276,7 @@ class BaseModelAgent(AutoModelAgent):
         cache_swapping(self.cache_engine,
                        swap_in_map=swap_in_map,
                        swap_out_map=swap_out_map)
+        print(inputs)
         output = model_forward(
             self.patched_model,
             inputs,
@@ -848,6 +848,7 @@ class CPUModelAgent(AutoModelAgent):
         
     def _build_model(self, model_name: str):
         """build patched model."""
+        from transformers import AutoModelForCausalLM, AutoTokenizer
         config = AutoConfig.from_pretrained(model_name, torchscript=True, return_dict=True, output_hidden_states=True) # , return_dict_in_generate=True
         model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=self.model_config.dtype, config=config, low_cpu_mem_usage=True, trust_remote_code=True)
         model = model.to(memory_format=torch.channels_last)

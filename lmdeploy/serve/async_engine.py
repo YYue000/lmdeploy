@@ -342,7 +342,7 @@ class AsyncEngine(LogitsMixin):
 
         async def _inner_call(i, generator):
             async for out in generator:
-                print(i,out)
+                # print(i,out)
                 outputs[i].text += out.response
                 outputs[i].generate_token_len = out.generate_token_len
                 outputs[i].input_token_len = out.input_token_len

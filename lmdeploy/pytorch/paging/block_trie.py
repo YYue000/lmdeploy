@@ -221,6 +221,8 @@ class DummyBlockTrie:
         return
     def allocate(self, seq: SchedulerSequence):
         return
+    def evict(self, seq: SchedulerSequence):
+        return
     
 def build_block_trie(cache_config: CacheConfig, block_manager: BaseBlockManager):
     if cache_config.host == "cpu":
