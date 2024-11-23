@@ -849,7 +849,7 @@ class CPUModelAgent(AutoModelAgent):
     def _build_model(self, model_name: str):
         """build patched model."""
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        config = AutoConfig.from_pretrained(model_name, torchscript=True, return_dict=True, output_hidden_states=True) # , return_dict_in_generate=True
+        config = AutoConfig.from_pretrained(model_name, torchscript=True, return_dict=True, output_hidden_states=True, use_cache=True) # , return_dict_in_generate=True
         model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=self.model_config.dtype, config=config, low_cpu_mem_usage=True, trust_remote_code=True)
         model = model.to(memory_format=torch.channels_last)
         model = model.eval()

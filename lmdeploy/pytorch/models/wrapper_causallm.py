@@ -28,7 +28,7 @@ class WrapperForCausalLM(nn.Module):
         logits, past_key_values, hidden_states = outputs
         # todo: kv cache update
         context = self.ctx_mgr.current_context()
-        context._outputs["hidden_states"] = hidden_states
+        context._outputs["hidden_states"] = hidden_states[-1]
         context._outputs["logits"] = logits
         context._outputs["past_key_values"] = past_key_values
         return hidden_states
