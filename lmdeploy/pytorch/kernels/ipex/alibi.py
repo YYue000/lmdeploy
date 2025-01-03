@@ -2,7 +2,7 @@ import torch
 import math
 
 @torch.compile
-def get_alibi_slope(num_heads: int, device: torch.device="cpu") -> torch.Tensor:
+def get_alibi_slope(num_heads: int, offset: int, head_slice: int, device: torch.device="cpu") -> torch.Tensor:
     """
     modified from transformers
     Args:
@@ -25,4 +25,5 @@ def get_alibi_slope(num_heads: int, device: torch.device="cpu") -> torch.Tensor:
         extra_powers = torch.arange(1, 1 + 2 * num_remaining_heads, 2, device=device, dtype=torch.int32)
         slopes = torch.cat([slopes, torch.pow(extra_base, extra_powers)], dim=0)
 
-    return slopes.reshape(num_heads)
+    slopes = slopes.reshape(num_heads)
+    return slopes[offset:offset+head_slice]

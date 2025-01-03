@@ -18,5 +18,8 @@ def get_backend():
     if device_type == 'maca':
         from .dlinfer import MacaOpsBackend
         return MacaOpsBackend
+    if device_type == 'ipex':
+        from .ipex import IPEXOpsBackend
+        return IPEXOpsBackend
     else:
         raise RuntimeError(f'Unsupported device type: {device_type}')

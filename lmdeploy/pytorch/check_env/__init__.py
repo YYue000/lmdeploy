@@ -217,6 +217,9 @@ def check_transformers_version(model_path: str,
             if model_config.dtype == torch.bfloat16:
                 assert is_bf16_supported(device_type), (
                     'bf16 is not supported on your device')
+            # if model_config.dtype == torch.half:
+                # assert is_fp16_supported(device_type), (
+                    # 'fp16 is not supported on your device')
         except AssertionError as e:
             message = (
                 f'Your device does not support `{model_config.dtype}`. '

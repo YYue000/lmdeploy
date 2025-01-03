@@ -20,11 +20,15 @@ class IPEXCPUGraphRunner(GraphRunner):
                  device: torch.device):
         super().__init__(model, model_config, cache_config, backend_config,
                          device)
+        
+        """
         self.model = torch.compile(self.model,
                                        fullgraph=True,
                                        dynamic=True,
                                        backend='inductor')
         self.model = self._convert_op()
+        """
     
     def _convert_op(self):
+        return self.model
         raise NotImplementedError

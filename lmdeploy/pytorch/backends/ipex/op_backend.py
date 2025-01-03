@@ -81,10 +81,10 @@ class IPEXOpsBackend(DefaultOpsBackend):
     def update_step_context(cls, step_context):
         attn_meta_cls = cls.get_attention_metadata_cls()
         attn_metadata = attn_meta_cls(
-            step_context.is_decoding,
-            step_context.block_offsets,
-            step_context.q_seqlens,
-            step_context.attention_mask
+            is_decoding=step_context.is_decoding,
+            block_offsets=step_context.block_offsets.cpu(),
+            q_seqlens=step_context.q_seqlens.cpu(),
+            kv_seqlens=step_context.kv_seqlens.cpu()
         )
         step_context.attn_metadata = attn_metadata
         return step_context

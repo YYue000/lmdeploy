@@ -14,8 +14,7 @@ class IPEXRMSNormImpl(RMSNormImpl):
                 x: torch.Tensor,
                 weight: torch.Tensor,
                 residual: torch.Tensor = None):
-        # return add_rms_norm(residual, x, weight, None, self.eps)
-        return add_rms_norm_cpu(residual, x, weight, None, self.eps)
+        return add_rms_norm_cpu(residual, x, weight, None, self.eps, add_back=False)
     
     
 class IPEXRMSNormBuilder(RMSNormBuilder):
