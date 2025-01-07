@@ -309,6 +309,25 @@ class StepContext:
             position_ids_1d = torch.cat(position_ids_1d).to(device)
         return position_ids_1d
 
+    def to_device(self, device: str):
+        """to device."""
+        out_dict = dict()
+        for f in fields(self):
+            k = f.name
+            v = getattr(self, k)
+            out_dict[k] = to_device_helper(v, device)
+        # tmp
+        # out_dict["attn_metadata"] = None
+        return StepContext(**out_dict)
+
+def to_device_helper(v, device):
+    if isinstance(v, torch.Tensor):
+        return v.to(device)
+    if isinstance(v, list):
+        return [to_device_helper(x, device) for x in v]
+    if isinstance(v, tuple):
+        return tuple(to_device_helper(x, device) for x in v)
+    return v
 
 class StepContextManager:
 

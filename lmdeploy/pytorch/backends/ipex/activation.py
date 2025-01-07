@@ -9,16 +9,14 @@ class IPEXSiluAndMulImpl(SiluAndMulImpl):
         self.inplace = inplace
         
     def forward(self, x: torch.Tensor):
-        gate, up = x.chunk(2, -1)
-        return silu_mul(gate, up, inplace=self.inplace)
+        return silu_mul(x, self.inplace)
     
 class IPEXGeluAndMulImpl(GeluAndMulImpl):
-    def __init__(self, inplace: bool):
-        self.inplace = inplace
+    def __init__(self, approximate: bool):
+        self.approximate = approximate
         
     def forward(self, x: torch.Tensor):
-        gate, up = x.chunk(2, -1)
-        return gelu_mul(gate, up, inplace=self.inplace)
+        return gelu_mul(x, approximate=self.approximate)
 
 class IPEXSiluAndMulBuilder(SiluAndMulBuilder):
     """silu and mul implementation builder."""
